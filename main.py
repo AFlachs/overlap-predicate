@@ -4,8 +4,8 @@ import plotly.express as px
 import pandas as pd
 
 
-NB_RANGES = 10000
-NB_TESTS = 100
+NB_RANGES = 1000
+NB_TESTS = 10
 MAX_RANGE_VAL = 1000
 NB_BUCKETS = 10
 
@@ -29,6 +29,15 @@ def range_overlaps(r1, r2):
 
 
 def analyze_norm_lin_approx(hist, const_ranges, bins):
+    """
+    Sums the contributions of every bucket having a non empty intersection with const_range.
+    If the const_range overlaps the bucket completely the contribution is the value of the histogram in this bucket,
+    otherwise it is a linear interpolation corresponding to the fraction of the overlap.
+    :param hist: Statistic to evaluate
+    :param const_ranges: List of reference ranges
+    :param bins: Values at the limits of the buckets of the histogram
+    :return: List of approximated number of line
+    """
     nb_line = np.zeros(len(const_ranges))
 
     for idx, r in enumerate(const_ranges):
@@ -55,6 +64,13 @@ def analyze_norm_lin_approx(hist, const_ranges, bins):
 
 
 def analyze_norm_no_approx(hist, const_ranges, bins):
+    """
+    Sums the values in the buckets which have a non empty intersection with const_range.
+    :param hist: Statistic to evaluate
+    :param const_ranges: List of reference ranges
+    :param bins: Values at the limits of the buckets of the histogram
+    :return: List of approximated number of line
+    """
     nb_line = np.zeros(len(const_ranges))
 
     for idx, r in enumerate(const_ranges):
@@ -72,45 +88,91 @@ def analyze_hist(hist, const_ranges, bins, lin_approx=False):
     return nb_line
 
 
-def build_histos(rand_ranges):
-    histo_mean_norm = np.zeros(NB_BUCKETS)
-    histo_local_norm = np.zeros(NB_BUCKETS)
-    histo_up_bound = np.zeros(NB_BUCKETS)
-    histo_low_bound = np.zeros(NB_BUCKETS)
+def build_appartenance_hist(rand_ranges, bins):
+    histo = np.zeros(NB_BUCKETS)
 
+    n = 0
+    for r in rand_ranges:
+        # Compute the number of bins which this range overlaps
+        end_idx, start_idx = bound_idx(bins, r)
+        n += end_idx - start_idx + 1  # Nb of buckets this range overlaps
+
+        for i in range(start_idx, end_idx + 1):
+            histo[i] += 1
+    n /= NB_RANGES
+    return histo, n
+
+
+def build_local_norm(rand_ranges, bins):
+    histo = np.zeros(NB_BUCKETS)
+
+    for r in rand_ranges:
+        # Compute the number of bins which this range overlaps
+        end_idx, start_idx = bound_idx(bins, r)
+        n = end_idx - start_idx + 1  # Nb of buckets this range overlaps
+
+        for i in range(start_idx, end_idx + 1):
+            histo[i] += 1/n
+    return histo
+
+
+def build_bound_hists(rand_ranges, bins):
+    hist_up = np.zeros(NB_BUCKETS)
+    hist_low = np.zeros(NB_BUCKETS)
+    for r in rand_ranges:
+        # Compute the number of bins which this range overlaps
+        end_idx, start_idx = bound_idx(bins, r)
+
+        hist_up[end_idx] += 1
+        hist_low[start_idx] += 1
+    return hist_low, hist_up
+
+
+def build_histos(rand_ranges):
+    """
+    Build diverse histograms for the column containing rand_ranges
+    :param rand_ranges: Column of range types
+    :return: Many histos
+    """
     max_val = rand_ranges.max().end
     min_val = rand_ranges.min().start
-    print("extrema :", min_val, max_val)
+
     bin_step = (max_val - min_val) / NB_BUCKETS
     bins = np.array(
         [min_val + i * bin_step for i in range(NB_BUCKETS + 1)]
     )
     print("bins :", bins)
 
-    n_tot = 0
-    for r in rand_ranges:
-        # Compute the number of bins which this range overlaps
-        end_idx, start_idx = bound_idx(bins, r)
+    histo_appart, mean_nb_overlap = build_appartenance_hist(rand_ranges, bins)
+    histo_mean_norm = np.copy(histo_appart) / mean_nb_overlap
+    histo_local_norm = build_local_norm(rand_ranges, bins)
+    histo_up_bound, histo_low_bound = build_bound_hists(rand_ranges, bins)
 
-        histo_up_bound[end_idx] += 1
-        histo_low_bound[start_idx] += 1  # Todo : return
-        n = end_idx - start_idx + 1  # Nb of buckets this range overlaps
-        n_tot += n
+    # Now that we have collected the statistic we needed we can compute the cumulated histograms of the bound
+    cumul_low_bound = np.zeros(NB_BUCKETS)
+    cumul_up_bound = np.zeros(NB_BUCKETS)
 
-        for i in range(start_idx, end_idx + 1):
-            histo_local_norm[i] += 1 / n
-            histo_mean_norm[i] += 1
+    cumul_low_bound[0] = histo_low_bound[0]
+    cumul_up_bound[0] = histo_up_bound[0]
+    for idx in range(1, NB_BUCKETS):
+        cumul_low_bound[idx] = cumul_low_bound[idx-1] + histo_low_bound[idx]
+        cumul_up_bound[idx] = cumul_up_bound[idx-1] + histo_up_bound[idx]
 
-    # TODO : cumuler les histogrammes de bounds
-    # Normalize the mean norm histogram
-    histo_mean_norm /= n_tot / NB_RANGES
-    # print("mean norm :", histo_mean_norm)
-    # print("local norm :", histo_local_norm)
+    hist_nb_new_ranges = np.zeros(NB_BUCKETS)
+    hist_nb_new_ranges[0] = histo_appart[0]
+    for i in range(1, NB_BUCKETS):
+        hist_nb_new_ranges[i] = histo_appart[i] - (cumul_low_bound[i-1] - cumul_up_bound[i-1])
 
-    return histo_local_norm, histo_mean_norm, bins
+    return histo_local_norm, histo_mean_norm, histo_low_bound, histo_up_bound, hist_nb_new_ranges, bins
 
 
 def bound_idx(bins, r):
+    """
+    Compute the indexes of the bounds of range r in histogram with buckets bins
+    :param bins: Limits of the histogram buckets
+    :param r: Range to fill in the histogram
+    :return: end_idx, start_idx
+    """
     idx = 0
     while idx < len(bins) - 1 and bins[idx + 1] < r.start:
         # Haven't reach the first bin of this range
@@ -136,7 +198,7 @@ def main():
     const_ranges_len = [r.len() for r in const_ranges]
 
     # Range_typanalyze
-    histo_local_norm, histo_mean_norm, bins = build_histos(rand_ranges)
+    histo_local_norm, histo_mean_norm, histo_low, histo_up, hist_nb_new_ranges, bins = build_histos(rand_ranges)
 
     print("Histograms are built")
 
@@ -160,9 +222,10 @@ def main():
 
     df = pd.DataFrame(data)
 
-    print(df)
+    print(df[["Ref length", "Delta mean-real", "Delta loc-real"]])
+
     fig = px.scatter(df, y="Delta mean-real", x="Ref length")
-    fig.show()
+    # fig.show()
 
 
 if __name__ == '__main__':
