@@ -11,6 +11,9 @@ class Range:
         self.start = min(n1, n2)
         self.end = max(n1, n2)
 
+    def len(self):
+        return self.end - self.start
+
     def __str__(self):
         return "[" + str(self.start) + ", " + str(self.end) + "]"
 

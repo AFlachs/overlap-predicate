@@ -1,9 +1,11 @@
 from range import Range
 import numpy as np
+import plotly.express as px
+import pandas as pd
 
 
-NB_RANGES = 1000000
-NB_TESTS = 10
+NB_RANGES = 10000
+NB_TESTS = 100
 MAX_RANGE_VAL = 1000
 NB_BUCKETS = 10
 
@@ -64,7 +66,7 @@ def analyze_norm_no_approx(hist, const_ranges, bins):
     return nb_line
 
 
-def analyze_norm(hist, const_ranges, bins, lin_approx=False):
+def analyze_hist(hist, const_ranges, bins, lin_approx=False):
     nb_line = analyze_norm_lin_approx(hist, const_ranges, bins) if lin_approx \
         else analyze_norm_no_approx(hist, const_ranges, bins)
     return nb_line
@@ -73,6 +75,9 @@ def analyze_norm(hist, const_ranges, bins, lin_approx=False):
 def build_histos(rand_ranges):
     histo_mean_norm = np.zeros(NB_BUCKETS)
     histo_local_norm = np.zeros(NB_BUCKETS)
+    histo_up_bound = np.zeros(NB_BUCKETS)
+    histo_low_bound = np.zeros(NB_BUCKETS)
+
     max_val = rand_ranges.max().end
     min_val = rand_ranges.min().start
     print("extrema :", min_val, max_val)
@@ -86,6 +91,9 @@ def build_histos(rand_ranges):
     for r in rand_ranges:
         # Compute the number of bins which this range overlaps
         end_idx, start_idx = bound_idx(bins, r)
+
+        histo_up_bound[end_idx] += 1
+        histo_low_bound[start_idx] += 1  # Todo : return
         n = end_idx - start_idx + 1  # Nb of buckets this range overlaps
         n_tot += n
 
@@ -93,10 +101,11 @@ def build_histos(rand_ranges):
             histo_local_norm[i] += 1 / n
             histo_mean_norm[i] += 1
 
+    # TODO : cumuler les histogrammes de bounds
     # Normalize the mean norm histogram
     histo_mean_norm /= n_tot / NB_RANGES
-    print("mean norm :", histo_mean_norm)
-    print("local norm :", histo_local_norm)
+    # print("mean norm :", histo_mean_norm)
+    # print("local norm :", histo_local_norm)
 
     return histo_local_norm, histo_mean_norm, bins
 
@@ -124,23 +133,36 @@ def main():
     # ex : serange_range && const_range[i]
     const_ranges = [Range(MAX_RANGE_VAL) for _ in range(NB_TESTS)]
     const_ranges = np.array(const_ranges)
+    const_ranges_len = [r.len() for r in const_ranges]
 
+    # Range_typanalyze
     histo_local_norm, histo_mean_norm, bins = build_histos(rand_ranges)
+
+    print("Histograms are built")
 
     real_line_nb = real_overlap(rand_ranges, const_ranges)
 
-    res_mean_norm = analyze_norm(histo_mean_norm, const_ranges, bins)
-    res_mean_norm_approx = analyze_norm(histo_mean_norm, const_ranges, bins, True)
-    res_loc_norm = analyze_norm(histo_local_norm, const_ranges, bins, False)
+    # Estimate
+    res_mean_norm = analyze_hist(histo_mean_norm, const_ranges, bins)
+    res_mean_norm_approx = analyze_hist(histo_mean_norm, const_ranges, bins, True)
+    res_loc_norm = analyze_hist(histo_local_norm, const_ranges, bins, False)
 
-    for idx, r in enumerate(res_mean_norm):
-        print("c_ran : ", const_ranges[idx])
-        print("real  :", real_line_nb[idx])
-        print("mean  :", res_mean_norm[idx])
-        print("mean_a:", res_mean_norm_approx[idx])
-        print("loc   :", res_loc_norm[idx], "\n")
-        # print("Delta mean, loc: ",
-        #      abs(real_line_nb[idx] - res_mean_norm[idx]), abs(res_loc_norm[idx] - real_line_nb[idx]))
+    data = {
+        "Ref ranges": const_ranges,
+        "Ref length": const_ranges_len,
+        "Real nb of &&": real_line_nb,
+        "Mean norm. estimation": res_mean_norm,
+        "Mean norm. app lin": res_mean_norm_approx,
+        "Delta mean-real": res_mean_norm - real_line_nb,
+        "Local norm. estimation": res_loc_norm,
+        "Delta loc-real": res_loc_norm - real_line_nb
+    }
+
+    df = pd.DataFrame(data)
+
+    print(df)
+    fig = px.scatter(df, y="Delta mean-real", x="Ref length")
+    fig.show()
 
 
 if __name__ == '__main__':
