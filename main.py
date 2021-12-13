@@ -2,12 +2,16 @@ from range import Range
 import numpy as np
 import plotly.express as px
 import pandas as pd
-
+import random
 
 NB_RANGES = 1000
-NB_TESTS = 10
+NB_TESTS = 100
 MAX_RANGE_VAL = 1000
 NB_BUCKETS = 10
+# We keep the same amount of buckets for the second relationship but we decrease the max value, the size of bins will
+# decrease too.
+MAX_RANGE_VAL_2 = 10000
+
 
 
 def real_overlap(rand_ranges: np.ndarray, const_ranges):
@@ -21,10 +25,25 @@ def real_overlap(rand_ranges: np.ndarray, const_ranges):
     return nb_line
 
 
+def real_join(rand_ranges: np.ndarray, rand_ranges_2: np.ndarray):
+    """
+    Method that determines the real number of overlaps between to relationships.
+    :param rand_ranges: Ranges of the first relationship.
+    :param rand_ranges_2: Ranges of the second relationship.
+    :return: The number of lines that are overlapping.
+    """
+    nb_line = 0
+    for r in rand_ranges:
+        for r2 in rand_ranges_2:
+            if range_overlaps(r, r2):
+                nb_line += 1
+    return nb_line
+
+
 def range_overlaps(r1, r2):
-    return r1.start < r2.start < r1.end or\
-           r1.start < r2.end < r1.end or\
-           r2.start < r1.start < r2.end or\
+    return r1.start < r2.start < r1.end or \
+           r1.start < r2.end < r1.end or \
+           r2.start < r1.start < r2.end or \
            r2.start < r1.end < r2.end
 
 
@@ -51,7 +70,7 @@ def analyze_norm_lin_approx(hist, const_ranges, bins):
             nb_line[idx] += length / (bins[1] - bins[0]) * hist[start_idx]
             continue
 
-        len_start = bins[start_idx+1] - r.start
+        len_start = bins[start_idx + 1] - r.start
         nb_line[idx] += len_start / (bins[1] - bins[0]) * hist[start_idx]
         len_end = r.end - bins[end_idx]
         nb_line[idx] += len_end / (bins[1] - bins[0]) * hist[end_idx]
@@ -80,6 +99,25 @@ def analyze_norm_no_approx(hist, const_ranges, bins):
                 break
             nb_line[idx] += hist[i]
     return nb_line
+
+
+def analyze_join_hists(hist, hist_2, bins, bins_2):
+    """
+    For each hist bucket, multiply the value of that bucket with the value of
+    the hist2 bucket(s) it overlaps.
+    :param hist: Histogram of new lines for the first relationship
+    :param hist_2: Histogram of "appartenance" for the second relationship
+    :param bins: Values at the limits of the buckets of the hist
+    :param bins_2: Values at the limits of the buckets of the hist_2
+    :return: The cardinality of the join between the two relationships.
+    """
+    nb_lines = 0
+
+    for i in range(len(hist)):
+        idx_buckets_2 = buckets_overlapped(bins, bins_2, i)
+        for idx in idx_buckets_2:
+            nb_lines += hist[i] * hist_2[idx]
+    return nb_lines
 
 
 def analyze_hist(hist, const_ranges, bins, lin_approx=False):
@@ -112,7 +150,7 @@ def build_local_norm(rand_ranges, bins):
         n = end_idx - start_idx + 1  # Nb of buckets this range overlaps
 
         for i in range(start_idx, end_idx + 1):
-            histo[i] += 1/n
+            histo[i] += 1 / n
     return histo
 
 
@@ -141,7 +179,7 @@ def build_histos(rand_ranges):
     bins = np.array(
         [min_val + i * bin_step for i in range(NB_BUCKETS + 1)]
     )
-    print("bins :", bins)
+    #print("bins :", bins)
 
     histo_appart, mean_nb_overlap = build_appartenance_hist(rand_ranges, bins)
     histo_mean_norm = np.copy(histo_appart) / mean_nb_overlap
@@ -155,15 +193,15 @@ def build_histos(rand_ranges):
     cumul_low_bound[0] = histo_low_bound[0]
     cumul_up_bound[0] = histo_up_bound[0]
     for idx in range(1, NB_BUCKETS):
-        cumul_low_bound[idx] = cumul_low_bound[idx-1] + histo_low_bound[idx]
-        cumul_up_bound[idx] = cumul_up_bound[idx-1] + histo_up_bound[idx]
+        cumul_low_bound[idx] = cumul_low_bound[idx - 1] + histo_low_bound[idx]
+        cumul_up_bound[idx] = cumul_up_bound[idx - 1] + histo_up_bound[idx]
 
     hist_nb_new_ranges = np.zeros(NB_BUCKETS)
     hist_nb_new_ranges[0] = histo_appart[0]
     for i in range(1, NB_BUCKETS):
-        hist_nb_new_ranges[i] = histo_appart[i] - (cumul_low_bound[i-1] - cumul_up_bound[i-1])
+        hist_nb_new_ranges[i] = histo_appart[i] - (cumul_low_bound[i - 1] - cumul_up_bound[i - 1])
 
-    return histo_local_norm, histo_mean_norm, histo_low_bound, histo_up_bound, hist_nb_new_ranges, bins
+    return histo_local_norm, histo_mean_norm, histo_low_bound, histo_up_bound, hist_nb_new_ranges, histo_appart, bins
 
 
 def bound_idx(bins, r):
@@ -186,10 +224,32 @@ def bound_idx(bins, r):
     return end_idx, start_idx
 
 
+def buckets_overlapped(bins, bins_2, i):
+    """
+    Allows you to define which buckets of relationship 2, relationship 1 overlaps.
+    :param bins: Values at the limits of the buckets of the hist
+    :param bins_2: Values at the limits of the buckets of the hist_2
+    :param i: Index of the bucket in the hist
+    :return: List of indexes of buckets that are overlapping the bucket in the hist.
+    """
+    idx_overlap = []
+    # print("Index du bucket dans A :", i)
+    startidx = bins[i]
+    endidx = bins[i + 1]
+    for j in range(len(bins_2) - 1):
+        if (startidx == bins_2[j]) or (endidx > bins_2[j] > startidx) or (bins_2[j + 1] > startidx > bins_2[j]):
+            idx_overlap.append(j)
+            # print("Overlap avec le bucket ", j, " dans B.")
+        elif bins_2[j] >= endidx:
+            break
+    return idx_overlap
+
+
 def main():
     # Generate some random ranges to simulate a database range content
     rand_ranges = [Range(MAX_RANGE_VAL) for _ in range(NB_RANGES)]
     rand_ranges = np.array(rand_ranges)
+
 
     # Constant ranges to be compared with
     # ex : serange_range && const_range[i]
@@ -198,16 +258,38 @@ def main():
     const_ranges_len = [r.len() for r in const_ranges]
 
     # Range_typanalyze
-    histo_local_norm, histo_mean_norm, histo_low, histo_up, hist_nb_new_ranges, bins = build_histos(rand_ranges)
+    histo_local_norm, histo_mean_norm, histo_low, histo_up, hist_nb_new_ranges, hist_appart, bins = build_histos(
+        rand_ranges)
 
     print("Histograms are built")
 
     real_line_nb = real_overlap(rand_ranges, const_ranges)
 
+
+    print("The real number of lines is calculated")
+
     # Estimate
     res_mean_norm = analyze_hist(histo_mean_norm, const_ranges, bins)
     res_mean_norm_approx = analyze_hist(histo_mean_norm, const_ranges, bins, True)
     res_loc_norm = analyze_hist(histo_local_norm, const_ranges, bins, False)
+
+
+    # To test the accuracy of our method for join cardinality, we generate many second relationships
+    res_join_cardinality = np.zeros(NB_TESTS)
+    real_line_join_nb = np.zeros(NB_TESTS)
+    second_rel_length = np.zeros(NB_TESTS)
+    for i in range(NB_TESTS):
+        # Randomly generate the length of the second relationship
+        length = random.randint(400, 10000)
+        second_rel_length[i] = length
+        # Generate another set of randoms range to test the calculation of join cardinality
+        rand_ranges_2 = [Range(length) for _ in range(NB_RANGES)]
+        rand_ranges_2 = np.array(rand_ranges_2)
+        # Construction of histograms for the join cardinality
+        histo_local_norm_2, histo_mean_norm_2, histo_low_2, histo_up_2, hist_nb_new_ranges_2, hist_appart_2, bins_2 = build_histos(
+            rand_ranges_2)
+        real_line_join_nb[i] = real_join(rand_ranges, rand_ranges_2)
+        res_join_cardinality[i] = analyze_join_hists(hist_nb_new_ranges, hist_appart_2, bins, bins_2) / 10
 
     data = {
         "Ref ranges": const_ranges,
@@ -217,15 +299,21 @@ def main():
         "Mean norm. app lin": res_mean_norm_approx,
         "Delta mean-real": res_mean_norm - real_line_nb,
         "Local norm. estimation": res_loc_norm,
-        "Delta loc-real": res_loc_norm - real_line_nb
+        "Delta loc-real": res_loc_norm - real_line_nb,
+        "Real nb of join": real_line_join_nb,
+        "Delta estimated join-real":res_join_cardinality - real_line_join_nb,
+        "Second rel length":second_rel_length,
     }
 
     df = pd.DataFrame(data)
 
-    print(df[["Ref length", "Delta mean-real", "Delta loc-real"]])
+    #print(df[["Ref length", "Delta mean-real", "Delta loc-real"]])
 
-    fig = px.scatter(df, y="Delta mean-real", x="Ref length")
-    # fig.show()
+    fig = px.scatter(df, y="Delta estimated join-real", x="Real nb of join")
+    fig.show()
+
+    print("Nb réel de lignes join :", real_line_join_nb, " Nb lignes estimées :", res_join_cardinality)
+    print("L'erreur est de ", ((res_join_cardinality-real_line_join_nb)/real_line_join_nb)*100, "%")
 
 
 if __name__ == '__main__':
