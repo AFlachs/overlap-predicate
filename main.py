@@ -7,7 +7,7 @@ import random
 NB_RANGES = 1000
 NB_TESTS = 100
 MAX_RANGE_VAL = 1000
-NB_BUCKETS = 10
+NB_BUCKETS = 100
 # We keep the same amount of buckets for the second relationship but we decrease the max value, the size of bins will
 # decrease too.
 MAX_RANGE_VAL_2 = 10000
@@ -62,9 +62,12 @@ def analyze_new_lines(hist_appart, hist_new_lines, const_ranges, bins):
         endidx, startidx = bound_idx(bins, r)
         nb_line[idx] += hist_appart[startidx]  # On ajoute comme première valeur, le nombre de lignes qui apparaissent
         # dans le bucket de départ.
-        for i in range(startidx + 1, endidx):
+        for i in range(startidx + 1, endidx + 1):
+            if i >= len(nb_line):
+                break
             nb_line[idx] += hist_new_lines[i]
     return nb_line
+
 
 def analyze_new_lines_lin_approx(hist_appart, hist_new_lines, const_ranges, bins):
     """
@@ -75,18 +78,29 @@ def analyze_new_lines_lin_approx(hist_appart, hist_new_lines, const_ranges, bins
     :param bins:
     :return:
     """
-    nb_line = np.zeros(len(const_ranges))
+    nb_line = np.zeros(NB_TESTS)
     length_bin = bins[1]-bins[0]
 
     for idx, r in enumerate(const_ranges):
         endidx, startidx = bound_idx(bins, r)
-        piece_r_in_bin = r.start - bins[startidx]
+
+
+        # Starting bucket
+        piece_r_in_bin = bins[startidx+1] - r.start
         presence_rate = piece_r_in_bin/length_bin
-        nb_line[idx] += hist_appart[startidx]*presence_rate  # On ajoute comme première valeur, le nombre de lignes qui apparaissent
+        nb_line[idx] += hist_appart[startidx]#*presence_rate  # On ajoute comme première valeur, le nombre de lignes qui apparaissent
         # dans le bucket de départ.
+
+        # Ending bucket
+        piece_r_in_bin = r.end - bins[endidx]
+        presence_rate = piece_r_in_bin/length_bin
+        nb_line[idx] += hist_new_lines[startidx]*presence_rate
         for i in range(startidx + 1, endidx):
+            if i >= NB_BUCKETS:
+                break
             nb_line[idx] += hist_new_lines[i]
     return nb_line
+
 
 def analyze_norm_lin_approx(hist, const_ranges, bins):
     """
@@ -183,6 +197,8 @@ def build_appartenance_hist(rand_ranges, bins):
         n += end_idx - start_idx + 1  # Nb of buckets this range overlaps
 
         for i in range(start_idx, end_idx + 1):
+            if i >= len(histo):
+                break
             histo[i] += 1
     n /= NB_RANGES
     return histo, n
@@ -197,6 +213,8 @@ def build_local_norm(rand_ranges, bins):
         n = end_idx - start_idx + 1  # Nb of buckets this range overlaps
 
         for i in range(start_idx, end_idx + 1):
+            if i >= len(histo):
+                break
             histo[i] += 1 / n
     return histo
 
@@ -231,7 +249,7 @@ def build_histos(rand_ranges):
     histo_appart, mean_nb_overlap = build_appartenance_hist(rand_ranges, bins)
     histo_mean_norm = np.copy(histo_appart) / mean_nb_overlap
     histo_local_norm = build_local_norm(rand_ranges, bins)
-    histo_up_bound, histo_low_bound = build_bound_hists(rand_ranges, bins)
+    histo_low_bound, histo_up_bound = build_bound_hists(rand_ranges, bins)
 
     # Now that we have collected the statistic we needed we can compute the cumulated histograms of the bound
     cumul_low_bound = np.zeros(NB_BUCKETS)
@@ -243,12 +261,7 @@ def build_histos(rand_ranges):
         cumul_low_bound[idx] = cumul_low_bound[idx - 1] + histo_low_bound[idx]
         cumul_up_bound[idx] = cumul_up_bound[idx - 1] + histo_up_bound[idx]
 
-    hist_nb_new_ranges = np.zeros(NB_BUCKETS)
-    hist_nb_new_ranges[0] = histo_appart[0]
-    for i in range(1, NB_BUCKETS):
-        hist_nb_new_ranges[i] = histo_appart[i] - (cumul_low_bound[i - 1] - cumul_up_bound[i - 1])
-
-    return histo_local_norm, histo_mean_norm, histo_low_bound, histo_up_bound, hist_nb_new_ranges, histo_appart, bins
+    return histo_local_norm, histo_mean_norm, histo_low_bound, histo_up_bound, histo_appart, bins
 
 
 def bound_idx(bins, r):
@@ -264,7 +277,7 @@ def bound_idx(bins, r):
         idx += 1
     start_idx = idx
 
-    while idx < len(bins) - 1 and bins[idx + 1] < r.end:
+    while idx +1 < len(bins) - 1 and bins[idx + 1] < r.end:
         # Haven't reach the last bin of this range
         idx += 1
     end_idx = idx
@@ -304,8 +317,7 @@ def main():
     const_ranges_len = [r.len() for r in const_ranges]
 
     # Range_typanalyze
-    histo_local_norm, histo_mean_norm, histo_low, histo_up, hist_nb_new_ranges, hist_appart, bins = build_histos(
-        rand_ranges)
+    histo_local_norm, histo_mean_norm, histo_low, histo_up, hist_appart, bins = build_histos(rand_ranges)
 
     print("Histograms are built")
 
@@ -317,25 +329,11 @@ def main():
     res_mean_norm = analyze_hist(histo_mean_norm, const_ranges, bins)
     res_mean_norm_approx = analyze_hist(histo_mean_norm, const_ranges, bins, True)
     res_loc_norm = analyze_hist(histo_local_norm, const_ranges, bins, False)
-    res_new_lines = analyze_hist_new_lines(hist_appart, hist_nb_new_ranges, const_ranges, bins)
-    res_new_lines_lin_approx = analyze_hist_new_lines(hist_appart, hist_nb_new_ranges, const_ranges, bins, True)
+    res_new_lines = analyze_hist_new_lines(hist_appart, histo_low, const_ranges, bins)
+    res_new_lines_lin_approx = analyze_hist_new_lines(hist_appart, histo_low, const_ranges, bins, True)
 
     # To test the accuracy of our method for join cardinality, we generate many second relationships
-    res_join_cardinality = np.zeros(NB_TESTS)
-    real_line_join_nb = np.zeros(NB_TESTS)
-    second_rel_length = np.zeros(NB_TESTS)
-    for i in range(NB_TESTS):
-        # Randomly generate the length of the second relationship
-        length = random.randint(400, 10000)
-        second_rel_length[i] = length
-        # Generate another set of randoms range to test the calculation of join cardinality
-        rand_ranges_2 = [Range(length) for _ in range(NB_RANGES)]
-        rand_ranges_2 = np.array(rand_ranges_2)
-        # Construction of histograms for the join cardinality
-        histo_local_norm_2, histo_mean_norm_2, histo_low_2, histo_up_2, hist_nb_new_ranges_2, hist_appart_2, bins_2 = build_histos(
-            rand_ranges_2)
-        real_line_join_nb[i] = real_join(rand_ranges, rand_ranges_2)
-        res_join_cardinality[i] = analyze_join_hists(hist_nb_new_ranges, hist_appart_2, bins, bins_2) / 10
+    real_line_join_nb, res_join_cardinality, second_rel_length = test_join_cardinality(bins, rand_ranges)
 
     data = {
         "Ref ranges": const_ranges,
@@ -357,14 +355,37 @@ def main():
 
     df = pd.DataFrame(data)
 
-    # print(df[["Ref length", "Delta mean-real", "Delta loc-real"]])
 
-    fig = px.scatter(df, y="Delta new lines", x="Real nb of &&")
+    # fig = px.scatter(df, y="Delta new lines", x="Ref length", title="No approx")
+    # fig = px.scatter(df, y="Delta new lines approx", x="Ref length", title="Approx")
+    fig = px.histogram(df, x="Delta estimated join-real")
     fig.show()
 
+
+def test_join_cardinality(bins, rand_ranges):
+    res_join_cardinality = np.zeros(NB_TESTS)
+    real_line_join_nb = np.zeros(NB_TESTS)
+    second_rel_length = np.zeros(NB_TESTS)
+    print("Generating second table for join")
+    for i in range(NB_TESTS):
+        # Randomly generate the length of the second relationship
+        length = random.randint(400, MAX_RANGE_VAL_2)
+        second_rel_length[i] = length
+        # Generate another set of randoms range to test the calculation of join cardinality
+        rand_ranges_2 = [Range(length) for _ in range(NB_RANGES)]
+        rand_ranges_2 = np.array(rand_ranges_2)
+        # Construction of histograms for the join cardinality
+        histo_local_norm_2, histo_mean_norm_2, histo_low_2, histo_up_2, hist_appart_2, bins_2 = \
+            build_histos(rand_ranges_2)
+        real_line_join_nb[i] = real_join(rand_ranges, rand_ranges_2)
+        res_join_cardinality[i] = analyze_join_hists(histo_low_2, hist_appart_2, bins, bins_2)
+    return real_line_join_nb, res_join_cardinality, second_rel_length
+
+
+"""
     print("Nb réel de lignes join :", real_line_join_nb, " Nb lignes estimées :", res_join_cardinality)
     print("Le pourcentage d'erreur est de ", ((res_join_cardinality - real_line_join_nb) / real_line_join_nb) * 100)
-
+"""
 
 if __name__ == '__main__':
     main()
