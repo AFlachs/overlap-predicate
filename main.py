@@ -13,7 +13,6 @@ NB_BUCKETS = 10
 MAX_RANGE_VAL_2 = 10000
 
 
-
 def real_overlap(rand_ranges: np.ndarray, const_ranges):
     nb_line = np.zeros(len(const_ranges))
     for idx, cr in enumerate(const_ranges):
@@ -46,6 +45,48 @@ def range_overlaps(r1, r2):
            r2.start < r1.start < r2.end or \
            r2.start < r1.end < r2.end
 
+
+def analyze_new_lines(hist_appart, hist_new_lines, const_ranges, bins):
+    """
+    Sums the contribution of every bucket with the new lines histogram values except for the
+    first bucket (the one where the const_range begins).
+    :param hist_appart:
+    :param hist_new_lines:
+    :param const_ranges:
+    :param bins:
+    :return:
+    """
+    nb_line = np.zeros(len(const_ranges))
+
+    for idx, r in enumerate(const_ranges):
+        endidx, startidx = bound_idx(bins, r)
+        nb_line[idx] += hist_appart[startidx]  # On ajoute comme première valeur, le nombre de lignes qui apparaissent
+        # dans le bucket de départ.
+        for i in range(startidx + 1, endidx):
+            nb_line[idx] += hist_new_lines[i]
+    return nb_line
+
+def analyze_new_lines_lin_approx(hist_appart, hist_new_lines, const_ranges, bins):
+    """
+    Same as analyze_lin_approx but with a linear approximation at the beginning.
+    :param hist_appart:
+    :param hist_new_lines:
+    :param const_ranges:
+    :param bins:
+    :return:
+    """
+    nb_line = np.zeros(len(const_ranges))
+    length_bin = bins[1]-bins[0]
+
+    for idx, r in enumerate(const_ranges):
+        endidx, startidx = bound_idx(bins, r)
+        piece_r_in_bin = r.start - bins[startidx]
+        presence_rate = piece_r_in_bin/length_bin
+        nb_line[idx] += hist_appart[startidx]*presence_rate  # On ajoute comme première valeur, le nombre de lignes qui apparaissent
+        # dans le bucket de départ.
+        for i in range(startidx + 1, endidx):
+            nb_line[idx] += hist_new_lines[i]
+    return nb_line
 
 def analyze_norm_lin_approx(hist, const_ranges, bins):
     """
@@ -126,6 +167,12 @@ def analyze_hist(hist, const_ranges, bins, lin_approx=False):
     return nb_line
 
 
+def analyze_hist_new_lines(hist_appart, hist_new_lines, const_ranges, bins, lin_approx=False):
+    nb_line = analyze_new_lines_lin_approx(hist_appart, hist_new_lines, const_ranges, bins) if lin_approx \
+        else analyze_new_lines(hist_appart, hist_new_lines, const_ranges, bins)
+    return nb_line
+
+
 def build_appartenance_hist(rand_ranges, bins):
     histo = np.zeros(NB_BUCKETS)
 
@@ -179,7 +226,7 @@ def build_histos(rand_ranges):
     bins = np.array(
         [min_val + i * bin_step for i in range(NB_BUCKETS + 1)]
     )
-    #print("bins :", bins)
+    # print("bins :", bins)
 
     histo_appart, mean_nb_overlap = build_appartenance_hist(rand_ranges, bins)
     histo_mean_norm = np.copy(histo_appart) / mean_nb_overlap
@@ -250,7 +297,6 @@ def main():
     rand_ranges = [Range(MAX_RANGE_VAL) for _ in range(NB_RANGES)]
     rand_ranges = np.array(rand_ranges)
 
-
     # Constant ranges to be compared with
     # ex : serange_range && const_range[i]
     const_ranges = [Range(MAX_RANGE_VAL) for _ in range(NB_TESTS)]
@@ -265,14 +311,14 @@ def main():
 
     real_line_nb = real_overlap(rand_ranges, const_ranges)
 
-
     print("The real number of lines is calculated")
 
     # Estimate
     res_mean_norm = analyze_hist(histo_mean_norm, const_ranges, bins)
     res_mean_norm_approx = analyze_hist(histo_mean_norm, const_ranges, bins, True)
     res_loc_norm = analyze_hist(histo_local_norm, const_ranges, bins, False)
-
+    res_new_lines = analyze_hist_new_lines(hist_appart, hist_nb_new_ranges, const_ranges, bins)
+    res_new_lines_lin_approx = analyze_hist_new_lines(hist_appart, hist_nb_new_ranges, const_ranges, bins, True)
 
     # To test the accuracy of our method for join cardinality, we generate many second relationships
     res_join_cardinality = np.zeros(NB_TESTS)
@@ -301,19 +347,23 @@ def main():
         "Local norm. estimation": res_loc_norm,
         "Delta loc-real": res_loc_norm - real_line_nb,
         "Real nb of join": real_line_join_nb,
-        "Delta estimated join-real":res_join_cardinality - real_line_join_nb,
-        "Second rel length":second_rel_length,
+        "Delta estimated join-real": res_join_cardinality - real_line_join_nb,
+        "Second rel length": second_rel_length,
+        "New lines estimation": res_new_lines,
+        "New lines approx estimation": res_new_lines_lin_approx,
+        "Delta new lines": res_new_lines - real_line_nb,
+        "Delta new lines approx": res_new_lines_lin_approx - real_line_nb,
     }
 
     df = pd.DataFrame(data)
 
-    #print(df[["Ref length", "Delta mean-real", "Delta loc-real"]])
+    # print(df[["Ref length", "Delta mean-real", "Delta loc-real"]])
 
-    fig = px.scatter(df, y="Delta estimated join-real", x="Real nb of join")
+    fig = px.scatter(df, y="Delta new lines", x="Real nb of &&")
     fig.show()
 
     print("Nb réel de lignes join :", real_line_join_nb, " Nb lignes estimées :", res_join_cardinality)
-    print("L'erreur est de ", ((res_join_cardinality-real_line_join_nb)/real_line_join_nb)*100, "%")
+    print("Le pourcentage d'erreur est de ", ((res_join_cardinality - real_line_join_nb) / real_line_join_nb) * 100)
 
 
 if __name__ == '__main__':
