@@ -2,11 +2,12 @@ from range import Range
 import numpy as np
 import plotly.express as px
 import pandas as pd
+import statistics
 import random
 
-NB_RANGES = 1000
+NB_RANGES = 100000
 NB_TESTS = 100
-MAX_RANGE_VAL = 1000
+MAX_RANGE_VAL = 10000
 NB_BUCKETS = 100
 # We keep the same amount of buckets for the second relationship but we decrease the max value, the size of bins will
 # decrease too.
@@ -251,16 +252,6 @@ def build_histos(rand_ranges):
     histo_local_norm = build_local_norm(rand_ranges, bins)
     histo_low_bound, histo_up_bound = build_bound_hists(rand_ranges, bins)
 
-    # Now that we have collected the statistic we needed we can compute the cumulated histograms of the bound
-    cumul_low_bound = np.zeros(NB_BUCKETS)
-    cumul_up_bound = np.zeros(NB_BUCKETS)
-
-    cumul_low_bound[0] = histo_low_bound[0]
-    cumul_up_bound[0] = histo_up_bound[0]
-    for idx in range(1, NB_BUCKETS):
-        cumul_low_bound[idx] = cumul_low_bound[idx - 1] + histo_low_bound[idx]
-        cumul_up_bound[idx] = cumul_up_bound[idx - 1] + histo_up_bound[idx]
-
     return histo_local_norm, histo_mean_norm, histo_low_bound, histo_up_bound, histo_appart, bins
 
 
@@ -315,51 +306,58 @@ def main():
     const_ranges = [Range(MAX_RANGE_VAL) for _ in range(NB_TESTS)]
     const_ranges = np.array(const_ranges)
     const_ranges_len = [r.len() for r in const_ranges]
-
     # Range_typanalyze
     histo_local_norm, histo_mean_norm, histo_low, histo_up, hist_appart, bins = build_histos(rand_ranges)
 
     print("Histograms are built")
 
-    real_line_nb = real_overlap(rand_ranges, const_ranges)
+    real_line_nb = real_overlap(rand_ranges, const_ranges) / NB_RANGES
 
     print("The real number of lines is calculated")
 
     # Estimate
-    res_mean_norm = analyze_hist(histo_mean_norm, const_ranges, bins)
-    res_mean_norm_approx = analyze_hist(histo_mean_norm, const_ranges, bins, True)
-    res_loc_norm = analyze_hist(histo_local_norm, const_ranges, bins, False)
-    res_new_lines = analyze_hist_new_lines(hist_appart, histo_low, const_ranges, bins)
-    res_new_lines_lin_approx = analyze_hist_new_lines(hist_appart, histo_low, const_ranges, bins, True)
+    res_mean_norm = analyze_hist(histo_mean_norm, const_ranges, bins) / NB_RANGES
+    res_mean_norm_approx = analyze_hist(histo_mean_norm, const_ranges, bins, True) / NB_RANGES
+    res_loc_norm = analyze_hist(histo_local_norm, const_ranges, bins, False) / NB_RANGES
+    res_new_lines = analyze_hist_new_lines(hist_appart, histo_low, const_ranges, bins) / NB_RANGES
+    res_new_lines_lin_approx = analyze_hist_new_lines(hist_appart, histo_low, const_ranges, bins, True) / NB_RANGES
 
     # To test the accuracy of our method for join cardinality, we generate many second relationships
-    real_line_join_nb, res_join_cardinality, second_rel_length = test_join_cardinality(bins, rand_ranges)
+    # real_line_join_nb, res_join_cardinality, second_rel_length = test_join_cardinality(bins, rand_ranges)
 
-    data = {
-        "Ref ranges": const_ranges,
-        "Ref length": const_ranges_len,
-        "Real nb of &&": real_line_nb,
-        "Mean norm. estimation": res_mean_norm,
-        "Mean norm. app lin": res_mean_norm_approx,
-        "Delta mean-real": res_mean_norm - real_line_nb,
-        "Local norm. estimation": res_loc_norm,
-        "Delta loc-real": res_loc_norm - real_line_nb,
-        "Real nb of join": real_line_join_nb,
-        "Delta estimated join-real": res_join_cardinality - real_line_join_nb,
-        "Second rel length": second_rel_length,
-        "New lines estimation": res_new_lines,
-        "New lines approx estimation": res_new_lines_lin_approx,
-        "Delta new lines": res_new_lines - real_line_nb,
-        "Delta new lines approx": res_new_lines_lin_approx - real_line_nb,
-    }
+    cols = ["Ref range idx", "Real fraction", "Selectivity", "Delta with real", "Type of approx"]
+    types_estimation = ["Mean normalization", "Mean normalization with approx", "Local normalization",
+                        "Counting method", "Counting method with approach", "Real fraction"]
+    datafr = pd.DataFrame(columns=cols)
 
-    df = pd.DataFrame(data)
+    #datafr = add_to_dataframe(datafr, real_line_nb, res_mean_norm, types_estimation[0])
+    # datafr = add_to_dataframe(datafr, real_line_nb, res_mean_norm_approx, types_estimation[1])
+    #datafr = add_to_dataframe(datafr, real_line_nb, res_loc_norm, types_estimation[2])
+    datafr = add_to_dataframe(datafr, real_line_nb, res_new_lines, types_estimation[3])
+    # datafr = add_to_dataframe(datafr, real_line_nb, res_new_lines_lin_approx, types_estimation[4])
+    # datafr = add_to_dataframe(datafr, real_line_nb, real_line_nb, types_estimation[5])
 
+    print(datafr)
+    print("Mean of difference is :", statistics.mean(res_new_lines - real_line_nb))
+    print("Std dev of diff is :", statistics.stdev(res_new_lines - real_line_nb))
 
-    # fig = px.scatter(df, y="Delta new lines", x="Ref length", title="No approx")
-    # fig = px.scatter(df, y="Delta new lines approx", x="Ref length", title="Approx")
-    fig = px.histogram(df, x="Delta estimated join-real")
+    fig = px.scatter(datafr, y=cols[3], x=cols[1],
+                     title="Difference between the estimated and the real selectivity ")
+    # fig = px.scatter(datafr, y=cols[3], x=cols[1], color=cols[4],
+    #                  title="Difference between the estimated and the real selectivity of the different estimation "
+    #                       "methods")
     fig.show()
+
+
+def add_to_dataframe(datafr, real_line_nb, estimation_values, type_of_appr: str):
+    datafr_app = pd.DataFrame({
+        'Ref range idx': np.arange(0, NB_TESTS),
+        'Real fraction': real_line_nb,
+        'Selectivity': estimation_values,
+        'Delta with real': estimation_values - real_line_nb,
+        'Type of approx': type_of_appr
+    })
+    return datafr.append(datafr_app, ignore_index=True)
 
 
 def test_join_cardinality(bins, rand_ranges):
@@ -381,11 +379,6 @@ def test_join_cardinality(bins, rand_ranges):
         res_join_cardinality[i] = analyze_join_hists(histo_low_2, hist_appart_2, bins, bins_2)
     return real_line_join_nb, res_join_cardinality, second_rel_length
 
-
-"""
-    print("Nb réel de lignes join :", real_line_join_nb, " Nb lignes estimées :", res_join_cardinality)
-    print("Le pourcentage d'erreur est de ", ((res_join_cardinality - real_line_join_nb) / real_line_join_nb) * 100)
-"""
 
 if __name__ == '__main__':
     main()

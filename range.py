@@ -1,6 +1,6 @@
 import random
 
-random.seed(10)
+# random.seed(10)
 
 
 class Range:
